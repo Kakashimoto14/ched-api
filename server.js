@@ -1,45 +1,45 @@
 const express = require('express');
+const cors = require('cors');
 const fs = require('fs');
 const csv = require('csv-parser');
-const cors = require('cors');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Allow your frontend to access this API
 app.use(cors());
 
 let institutions = [];
 
-// 1. Load and parse the CSV as soon as the server starts
-fs.createReadStream('institutions.csv') // Make sure this matches your file name
+// Load CSV
+fs.createReadStream('institutions.csv')
   .pipe(csv())
   .on('data', (row) => {
-    // Clean up the data if needed (e.g., remove empty rows)
-    institutions.push(row);
+    // CLEAN THE KEYS: Convert "INSTITUTION NAME" to "name"
+    // This makes it easier for the frontend
+    const cleanRow = {
+      name: row['INSTITUTION NAME'] || row['Name'] || row['name'],
+      type: row['INSTITUTION TYPE'] || row['Type'],
+      city: row['MUNICIPALITY'] || row['City'],
+      province: row['PROVINCE'] || row['Province'],
+      region: row['REGION'] || row['Region'],
+      website: row['WEBSITE ADDRESS'] || row['WEBSITE'] || row['Website'],
+      contact: row['TELEPHONE NO'] || row['Telephone']
+    };
+    if (cleanRow.name) institutions.push(cleanRow);
   })
   .on('end', () => {
-    console.log(`✅ database loaded! Found ${institutions.length} institutions.`);
+    console.log(`✅ Database loaded: ${institutions.length} entries.`);
   });
 
-// 2. Define your API Endpoint
-app.get('/api/institutions', (req, res) => {
-    // Optional: Add search functionality directly in the API!
-    const { search } = req.query;
-
-    if (search) {
-        // Filter results if the user sent a search term
-        const filtered = institutions.filter(inst => 
-            inst['INSTITUTION NAME'].toLowerCase().includes(search.toLowerCase())
-        );
-        return res.json(filtered);
-    }
-
-    // Otherwise return everything
-    res.json(institutions);
+// Root route to check if server is alive
+app.get('/', (req, res) => {
+  res.send('CHED API is running. Go to /api/institutions to see data.');
 });
 
-// 3. Start the server
+app.get('/api/institutions', (req, res) => {
+  res.json(institutions);
+});
+
 app.listen(port, () => {
-    console.log(`🚀 CHED API is running at http://localhost:${port}`);
+  console.log(`🚀 Server running on port ${port}`);
 });
