@@ -645,7 +645,7 @@ REGION, INSTITUTION NAME, INSTITUTION TYPE, PROVINCE, MUNICIPALITY/CITY, WEBSITE
 04 - CALABARZON,International Christian College of Manila,Private,Rizal,City of Antipolo,http://iccmanila.com,(02) 356-3965
 04 - CALABARZON,Philippine International College,Private,Rizal,City of Antipolo,http://www.picollege.edu.ph http://www.pic1996.edu.ph,(02) 425-3924
 04 - CALABARZON,Teodoro M. Luansing College of Rosario,Private,Batangas,Rosario,aeris.asia,(043) 781-1483
-04 - CALABARZON,Colegio de Montalban,LUC,Rizal,Rodriguez,,(02) 395-9731
+04 - CALABARZON,Colegio de Montalban,LUC,Rizal,Rodriguez,https://www.facebook.com/official.colegiodemontalban,(02) 395-9731
 04 - CALABARZON,Pambayang Kolehiyo ng Mauban,LUC,Quezon,Mauban,http://www.etcpluzon.edu.ph,(042) 785-1184
 04 - CALABARZON,Cavite State University-Trece Martires City Campus,SUC,Cavite,City of Trece Martires,http://www.cvsu.edu.ph,(046) 419-3336; (046) 415-0015
 04 - CALABARZON,Our Lady of Assumption College-Cabuyao,Private,Laguna,City of Cabuyao,http://ourladyofassumptioncollege.com,(049) 703-6297; (049) 243-5127; (02) 808-2902
@@ -2336,3 +2336,4 @@ REGION, INSTITUTION NAME, INSTITUTION TYPE, PROVINCE, MUNICIPALITY/CITY, WEBSITE
 18 - Negros Island Region,VMA Global College,Private,Negros Occidental,City of Bacolod,http://www.vma.edu.ph FB page: VMA Global College Registrar,(034) 4441755
 18 - Negros Island Region,West Visayas State University-Himamaylan Campus Extension,SUC,Negros Occidental,City of Himamaylan,,(033) 320-0870; (033) 320-0879
 18 - Negros Island Region,City College of Bayawan,LUC,Negros Oriental,Bayawan City,,(035) 430-0281
+
