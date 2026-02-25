@@ -39,7 +39,7 @@ app.post('/api/chat', async (req, res) => {
       return res.status(500).json({ error: "Server missing API key." });
     }
 
-    const GEMINI_MODEL = "gemini-1.5-flash";
+    const GEMINI_MODEL = "gemini-1.5-flash-latest";
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
     const payload = {
@@ -88,3 +88,4 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
