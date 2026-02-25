@@ -2,44 +2,41 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const csv = require('csv-parser');
+const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 3000;
-
+// Enable CORS so your Vercel frontend is allowed to request data
 app.use(cors());
 
-let institutions = [];
+const PORT = process.env.PORT || 3000;
+let databaseCache = [];
 
-// Load CSV
-fs.createReadStream('institutions.csv')
+// 1. WARM UP CACHE: Read the CSV into memory ONCE when the server boots
+const csvFilePath = path.join(__dirname, 'institutions.csv');
+
+fs.createReadStream(csvFilePath)
   .pipe(csv())
-  .on('data', (row) => {
-    // CLEAN THE KEYS: Convert "INSTITUTION NAME" to "name"
-    // This makes it easier for the frontend
-    const cleanRow = {
-      name: row['INSTITUTION NAME'] || row['Name'] || row['name'],
-      type: row['INSTITUTION TYPE'] || row['Type'],
-      city: row['MUNICIPALITY'] || row['City'],
-      province: row['PROVINCE'] || row['Province'],
-      region: row['REGION'] || row['Region'],
-      website: row['WEBSITE ADDRESS'] || row['WEBSITE'] || row['Website'],
-      contact: row['TELEPHONE NO'] || row['Telephone']
-    };
-    if (cleanRow.name) institutions.push(cleanRow);
-  })
+  .on('data', (data) => databaseCache.push(data))
   .on('end', () => {
-    console.log(`✅ Database loaded: ${institutions.length} entries.`);
+    console.log(`✅ Database loaded successfully. Found ${databaseCache.length} records.`);
+  })
+  .on('error', (err) => {
+    console.error('❌ Critical Error reading CSV file. Check if institutions.csv exists!', err);
   });
 
-// Root route to check if server is alive
-app.get('/', (req, res) => {
-  res.send('CHED API is running. Go to /api/institutions to see data.');
-});
-
+// 2. THE ENDPOINT: This exactly matches your frontend fetch request
 app.get('/api/institutions', (req, res) => {
-  res.json(institutions);
+  if (databaseCache.length === 0) {
+    return res.status(503).json({ error: "Database is warming up, please try again in a few seconds." });
+  }
+  res.json(databaseCache); // Instantly serve from RAM
 });
 
-app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
+// 3. HEALTH CHECK: Gives you a friendly message if you visit the base URL
+app.get('/', (req, res) => {
+  res.send("🚀 CHED API is Live! Access data at /api/institutions");
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
