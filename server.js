@@ -26,65 +26,102 @@ fs.createReadStream(csvFilePath)
     console.error('❌ Critical Error reading CSV file. Check if institutions.csv exists!', err);
   });
 
-// --- NEW SECURE AI ROUTE WITH FAILSAFES ---
+// --- CUSTOM LOCAL AI (FAILSAFE BRAIN) ---
+// This acts as a backup AI if the Google API fails. It directly queries your CSV cache.
+const customLocalLumina = (chatHistory, db) => {
+    const lastMessage = chatHistory[chatHistory.length - 1].parts[0].text.toLowerCase();
+    
+    // Simple Keyword Matching Engine
+    let matches = db.filter(inst => 
+        (inst.NAME && inst.NAME.toLowerCase().includes(lastMessage)) || 
+        (inst.CITY && inst.CITY.toLowerCase().includes(lastMessage)) ||
+        (inst.REGION && inst.REGION.toLowerCase().includes(lastMessage))
+    );
+
+    if (matches.length > 0) {
+        const topMatches = matches.slice(0, 5);
+        let responseList = topMatches.map(m => `<b>${m.NAME}</b> in ${m.CITY} (${m.TYPE})`).join('<br/>• ');
+        return `I found some matches in our local database based on your query:<br/><br/>• ${responseList}<br/><br/>How else can I assist you?`;
+    }
+
+    if (lastMessage.includes('hello') || lastMessage.includes('hi')) {
+        return "Hello! I am Lumina. I am currently running on my local fallback servers. How can I help you explore Philippine universities today?";
+    }
+
+    return "I am Lumina, your custom university explorer AI. I am currently running in <b>Local Cache Mode</b> because my external neural link is unavailable. Please ask me about specific cities, regions, or university names!";
+};
+
+// --- NEW SECURE HYBRID AI ROUTE ---
 app.post('/api/chat', async (req, res) => {
   try {
     const { chatHistory, systemContext } = req.body;
     
-    // Grabs the key securely and STRIPS HIDDEN SPACES (Crucial Fix)
+    // Grabs the key securely and STRIPS HIDDEN SPACES
     const rawApiKey = process.env.GEMINI_API_KEY;
 
     if (!rawApiKey) {
-      console.error("No API key found in backend environment variables.");
-      return res.status(500).json({ error: "Server missing API key." });
+      console.warn("No API key found. Engaging Local Custom AI...");
+      const fallbackResponse = customLocalLumina(chatHistory, databaseCache);
+      return res.json({ text: fallbackResponse });
     }
 
     const apiKey = rawApiKey.trim();
 
-    // Use the highly stable v1beta endpoint
-    const GEMINI_MODEL = "gemini-1.5-flash";
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    // Ensure proper mapping of chat history to prevent payload structure errors
+    const formattedHistory = chatHistory.map(msg => ({
+        role: msg.role === 'model' ? 'model' : 'user',
+        parts: [{ text: msg.parts[0].text }]
+    }));
 
-    const payload = {
-      contents: chatHistory,
-      systemInstruction: { parts: [{ text: systemContext }] }
-    };
+    // Try multiple models in case one is restricted for the user's API Key tier
+    const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"];
+    let aiResponseText = null;
+    let apiError = null;
 
-    // Make the secure fetch to Google from the backend
-    let response = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    // Strict Website-Only Guardrail
+    const strictContext = systemContext + " RULE: You are ONLY allowed to talk about Philippine universities, education, and the data provided. Refuse to answer questions outside of this scope.";
 
-    let data = await response.json();
-    
-    // FAILSAFE: If Google 404s the model, try the -latest suffix automatically
-    if (!response.ok && response.status === 404) {
-        console.warn("Standard model 404'd. Attempting fallback to -latest alias...");
-        const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-        response = await fetch(fallbackUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
-        data = await response.json();
+    for (const model of modelsToTry) {
+        try {
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const payload = {
+              contents: formattedHistory,
+              systemInstruction: { parts: [{ text: strictContext }] }
+            };
+
+            const response = await fetch(API_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.candidates && data.candidates.length > 0) {
+                aiResponseText = data.candidates[0].content.parts[0].text;
+                break; // Success! Break out of the loop
+            } else {
+                apiError = data.error?.message || "Unknown API Error";
+                console.warn(`Model ${model} failed: ${apiError}. Trying next...`);
+            }
+        } catch (fetchErr) {
+            console.warn(`Fetch to model ${model} failed.`, fetchErr.message);
+        }
     }
 
-    // Final error check
-    if (!response.ok) {
-      console.error("Gemini API Error Response:", data);
-      return res.status(response.status).json(data);
+    // If all Google Models failed, seamlessly trigger the Local Custom AI
+    if (!aiResponseText) {
+        console.error("All Google AI models failed. Engaging Local Custom AI. Last error:", apiError);
+        aiResponseText = customLocalLumina(chatHistory, databaseCache);
     }
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Anomaly detected in neural link.";
     
     // Send the safe response text back to the frontend
-    res.json({ text });
+    res.json({ text: aiResponseText });
 
   } catch (error) {
-    console.error("Chat API Error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Chat API Critical Error:", error);
+    // Ultimate Failsafe
+    res.json({ text: "I experienced a critical system reboot. Please ask your question again." });
   }
 });
 
