@@ -26,21 +26,24 @@ fs.createReadStream(csvFilePath)
     console.error('❌ Critical Error reading CSV file. Check if institutions.csv exists!', err);
   });
 
-// --- NEW SECURE AI ROUTE ---
+// --- NEW SECURE AI ROUTE WITH FAILSAFES ---
 app.post('/api/chat', async (req, res) => {
   try {
     const { chatHistory, systemContext } = req.body;
     
-    // Grabs the key securely from Render's Environment Variables
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Grabs the key securely and STRIPS HIDDEN SPACES (Crucial Fix)
+    const rawApiKey = process.env.GEMINI_API_KEY;
 
-    if (!apiKey) {
+    if (!rawApiKey) {
       console.error("No API key found in backend environment variables.");
       return res.status(500).json({ error: "Server missing API key." });
     }
 
+    const apiKey = rawApiKey.trim();
+
+    // Use the highly stable v1beta endpoint
     const GEMINI_MODEL = "gemini-1.5-flash";
-    const API_URL = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
     const payload = {
       contents: chatHistory,
@@ -48,14 +51,27 @@ app.post('/api/chat', async (req, res) => {
     };
 
     // Make the secure fetch to Google from the backend
-    const response = await fetch(API_URL, {
+    let response = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
-    const data = await response.json();
+    let data = await response.json();
     
+    // FAILSAFE: If Google 404s the model, try the -latest suffix automatically
+    if (!response.ok && response.status === 404) {
+        console.warn("Standard model 404'd. Attempting fallback to -latest alias...");
+        const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+        response = await fetch(fallbackUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        data = await response.json();
+    }
+
+    // Final error check
     if (!response.ok) {
       console.error("Gemini API Error Response:", data);
       return res.status(response.status).json(data);
@@ -88,6 +104,3 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
-
-
-
