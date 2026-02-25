@@ -40,11 +40,17 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const GEMINI_MODEL = "gemini-1.5-flash";
-    const API_URL =`https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+    const API_URL = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
     const payload = {
-      contents: chatHistory,
-      systemInstruction: { parts: [{ text: systemContext }] }
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: systemContext }]
+        },
+        ...chatHistory
+      ]
     };
 
     // Make the secure fetch to Google from the backend
@@ -88,5 +94,6 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
 
 
