@@ -5,8 +5,10 @@ const csv = require('csv-parser');
 const path = require('path');
 
 const app = express();
-// Enable CORS so your Vercel frontend is allowed to request data
 app.use(cors());
+
+// REQUIRED for receiving JSON data (like chat history) from the frontend
+app.use(express.json()); 
 
 const PORT = process.env.PORT || 3000;
 let databaseCache = [];
@@ -24,7 +26,53 @@ fs.createReadStream(csvFilePath)
     console.error('❌ Critical Error reading CSV file. Check if institutions.csv exists!', err);
   });
 
-// 2. THE ENDPOINT: This exactly matches your frontend fetch request
+// --- NEW SECURE AI ROUTE ---
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { chatHistory, systemContext } = req.body;
+    
+    // Grabs the key securely from Render's Environment Variables
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      console.error("No API key found in backend environment variables.");
+      return res.status(500).json({ error: "Server missing API key." });
+    }
+
+    const GEMINI_MODEL = "gemini-1.5-flash";
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+    const payload = {
+      contents: chatHistory,
+      systemInstruction: { parts: [{ text: systemContext }] }
+    };
+
+    // Make the secure fetch to Google from the backend
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error("Gemini API Error Response:", data);
+      return res.status(response.status).json(data);
+    }
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Anomaly detected in neural link.";
+    
+    // Send the safe response text back to the frontend
+    res.json({ text });
+
+  } catch (error) {
+    console.error("Chat API Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 2. THE DATA ENDPOINT: Sends your CSV data
 app.get('/api/institutions', (req, res) => {
   if (databaseCache.length === 0) {
     return res.status(503).json({ error: "Database is warming up, please try again in a few seconds." });
@@ -32,9 +80,9 @@ app.get('/api/institutions', (req, res) => {
   res.json(databaseCache); // Instantly serve from RAM
 });
 
-// 3. HEALTH CHECK: Gives you a friendly message if you visit the base URL
+// 3. HEALTH CHECK
 app.get('/', (req, res) => {
-  res.send("🚀 CHED API is Live! Access data at /api/institutions");
+  res.send("🚀 CHED API is Live! Access data at /api/institutions or chat at /api/chat");
 });
 
 app.listen(PORT, () => {
