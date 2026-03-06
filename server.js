@@ -13,6 +13,16 @@ const PORT = process.env.PORT || 3000;
 let databaseCache = [];
 
 /* =========================================
+   HELPER: ROBUST KEY EXTRACTOR
+   (Fixes messy CSV headers like " NAME OF HEI ")
+========================================= */
+function getVal(row, keyStr) {
+    if (!row) return '';
+    const foundKey = Object.keys(row).find(k => k.trim().toUpperCase().includes(keyStr.toUpperCase()));
+    return foundKey ? String(row[foundKey]).trim() : '';
+}
+
+/* =========================================
    LOAD CSV DATABASE INTO MEMORY
 ========================================= */
 
@@ -45,13 +55,15 @@ function searchUniversities(query, db) {
 
     const scoredResults = db.map(u => {
         let score = 0;
-        const name = (u.NAME || "").toLowerCase();
-        const city = (u.CITY || "").toLowerCase();
-        const province = (u.PROVINCE || "").toLowerCase();
-        const region = (u.REGION || "").toLowerCase();
-        const type = (u.TYPE || "").toLowerCase();
+        
+        // FIXED: Using getVal to safely grab data regardless of CSV header formatting
+        const name = getVal(u, 'NAME').toLowerCase();
+        const city = (getVal(u, 'MUNICIPALITY') || getVal(u, 'CITY')).toLowerCase();
+        const province = getVal(u, 'PROVINCE').toLowerCase();
+        const region = getVal(u, 'REGION').toLowerCase();
+        const type = getVal(u, 'TYPE').toLowerCase();
 
-        // High priority: The user's sentence contains the exact university name (e.g. "tell me about ateneo de manila")
+        // High priority: The user's sentence contains the exact university name
         if (name.length > 4 && q.includes(name)) score += 100;
         
         // High priority: The cleaned query matches part of the name
@@ -92,9 +104,14 @@ function localLumina(question, matches) {
         return "I am currently running in <b>Offline Cache Mode</b>. I could not find any specific universities matching that exact query. Try searching for a specific city like 'Manila' or a course like 'Nursing'.";
     }
 
-    const list = matches.map(u =>
-        `• <b>${u.NAME}</b> (${u.CITY}, ${u.REGION}) - ${u.TYPE}`
-    ).join("<br/>");
+    // FIXED: Using getVal for safe formatting
+    const list = matches.map(u => {
+        const name = getVal(u, 'NAME');
+        const city = getVal(u, 'MUNICIPALITY') || getVal(u, 'CITY');
+        const reg = getVal(u, 'REGION');
+        const type = getVal(u, 'TYPE');
+        return `• <b>${name}</b> (${city}, ${reg}) - ${type}`;
+    }).join("<br/>");
 
     return `Here are some universities I found in my local database:<br/><br/>${list}`;
 }
@@ -125,10 +142,16 @@ app.post('/api/chat', async (req, res) => {
         ========================================= */
         let universityContext = "No specific universities found for this query.";
         if (matchedUniversities.length > 0) {
-            // Enhanced context string for Gemini
-            universityContext = matchedUniversities.map(u =>
-                `Name: ${u.NAME} | Location: ${u.CITY}, ${u.PROVINCE || ''}, ${u.REGION} | Type: ${u.TYPE} | Website: ${u.WEBSITE || 'N/A'}`
-            ).join("\n");
+            // FIXED: Using getVal to guarantee context is populated correctly for the AI
+            universityContext = matchedUniversities.map(u => {
+                const name = getVal(u, 'NAME');
+                const city = getVal(u, 'MUNICIPALITY') || getVal(u, 'CITY');
+                const prov = getVal(u, 'PROVINCE');
+                const reg = getVal(u, 'REGION');
+                const type = getVal(u, 'TYPE');
+                const web = getVal(u, 'WEBSITE');
+                return `Name: ${name} | Location: ${city}, ${prov}, ${reg} | Type: ${type} | Website: ${web || 'N/A'}`;
+            }).join("\n");
         }
 
         /* =========================================
@@ -162,8 +185,6 @@ Rules:
 
         /* =========================================
            BULLETPROOF PAYLOAD INJECTION
-           Instead of using systemInstruction (which causes 400 errors), 
-           we inject the rules directly into the first user message.
         ========================================= */
         const robustHistory = [...chatHistory];
         robustHistory[0].parts[0].text = `[SYSTEM RULES:\n${systemPrompt}]\n\n--- END SYSTEM RULES ---\n\nUSER MESSAGE: ${robustHistory[0].parts[0].text}`;
@@ -172,7 +193,6 @@ Rules:
 
         /* =========================================
            MULTI-MODEL CASCADE
-           If one model 404s, it instantly tries the next one.
         ========================================= */
         const modelsToTry = [
             "gemini-2.5-flash",
