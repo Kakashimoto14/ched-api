@@ -51,20 +51,26 @@ function searchUniversities(query, db) {
 
 
 /* =========================================
-   LOCAL FALLBACK AI
+   LOCAL FALLBACK AI (Upgraded)
 ========================================= */
 
 function localLumina(question, matches) {
-    if (matches.length === 0) {
-        return "I could not find any universities related to your search in the local database.";
+    const q = (question || "").toLowerCase();
+    
+    // Smart Greeting Recognition
+    if (q.includes('hi') || q.includes('hello') || q.includes('hey')) {
+        return "Hello! I am Lumina. I am currently running on my ultra-fast offline backup server! How can I help you explore Philippine universities today?";
     }
 
-    // FIXED: Use HTML tags because the frontend renders with dangerouslySetInnerHTML
+    if (matches.length === 0) {
+        return "I am currently running in <b>Offline Cache Mode</b>. I could not find any specific universities matching that exact query. Try searching for a specific city like 'Manila' or a course like 'Nursing'.";
+    }
+
     const list = matches.map(u =>
         `• <b>${u.NAME}</b> (${u.CITY}, ${u.REGION}) - ${u.TYPE}`
     ).join("<br/>");
 
-    return `Here are universities related to your search:<br/><br/>${list}`;
+    return `Here are some universities I found in my local database:<br/><br/>${list}`;
 }
 
 
@@ -74,58 +80,48 @@ function localLumina(question, matches) {
 
 app.post('/api/chat', async (req, res) => {
     try {
-        // FIXED: Extract both history AND context from the frontend request
         const { chatHistory, systemContext } = req.body;
 
-        const userQuestion = chatHistory[chatHistory.length - 1]?.parts?.[0]?.text || "";
+        // Failsafe if frontend sends empty data
+        if (!chatHistory || !Array.isArray(chatHistory) || chatHistory.length === 0) {
+            return res.json({ text: "I didn't receive a message. Please try again." });
+        }
 
+        const userQuestion = chatHistory[chatHistory.length - 1]?.parts?.[0]?.text || "";
 
         /* =========================================
            SEARCH DATABASE FIRST
         ========================================= */
-
         const matchedUniversities = searchUniversities(userQuestion, databaseCache);
-
 
         /* =========================================
            BUILD DATABASE CONTEXT
         ========================================= */
-
         let universityContext = "No specific universities found for this query.";
-
         if (matchedUniversities.length > 0) {
             universityContext = matchedUniversities.map(u =>
                 `${u.NAME} | ${u.CITY} | ${u.REGION} | ${u.TYPE}`
             ).join("\n");
         }
 
-
         /* =========================================
            GET GEMINI API KEY
         ========================================= */
-
         const rawApiKey = process.env.GEMINI_API_KEY;
-
         if (!rawApiKey) {
             console.log("⚠️ No API Key detected. Using local AI.");
-            return res.json({
-                text: localLumina(userQuestion, matchedUniversities)
-            });
+            return res.json({ text: localLumina(userQuestion, matchedUniversities) });
         }
         
-        // FIXED: Trim spaces to prevent 404 errors
         const apiKey = rawApiKey.trim();
-
 
         /* =========================================
            AI PROMPT SYSTEM
         ========================================= */
-
-        // Combines frontend context with backend database results
         const systemPrompt = `
 ${systemContext || "You are Lumina AI, an expert assistant that helps students explore Philippine universities."}
 
-Only use the university data provided below. Always format your responses cleanly using HTML tags like <b> for bolding and <br/> for line breaks.
+Only use the university data provided below. Always format your responses cleanly using HTML tags like <b> for bolding and <br/> for line breaks. Do NOT use markdown asterisks.
 
 University Database Results:
 ${universityContext}
@@ -137,36 +133,62 @@ Rules:
 - Be helpful for incoming college students
 `;
 
+        /* =========================================
+           BULLETPROOF PAYLOAD INJECTION
+           Instead of using systemInstruction (which causes 400 errors), 
+           we inject the rules directly into the first user message.
+        ========================================= */
+        const robustHistory = [...chatHistory];
+        robustHistory[0].parts[0].text = `[SYSTEM RULES:\n${systemPrompt}]\n\n--- END SYSTEM RULES ---\n\nUSER MESSAGE: ${robustHistory[0].parts[0].text}`;
+
+        const payload = { contents: robustHistory };
 
         /* =========================================
-           CALL GEMINI API
+           MULTI-MODEL CASCADE
+           If one model 404s, it instantly tries the next one.
         ========================================= */
+        const modelsToTry = [
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-pro"
+        ];
 
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        let aiResponseText = null;
+        let lastError = null;
 
-        const payload = {
-            contents: chatHistory, // FIXED: Send entire history so the AI remembers context!
-            systemInstruction: {
-                parts: [{ text: systemPrompt }]
+        for (const model of modelsToTry) {
+            try {
+                const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.candidates && data.candidates.length > 0) {
+                    aiResponseText = data.candidates[0].content.parts[0].text;
+                    console.log(`✅ Successfully used model: ${model}`);
+                    break; // Success! Exit the loop.
+                } else {
+                    lastError = data.error?.message || JSON.stringify(data);
+                    console.log(`⚠️ Model ${model} failed. Trying next... Error: ${lastError}`);
+                }
+            } catch (e) {
+                console.log(`⚠️ Network fetch failed for ${model}. Trying next...`);
             }
-        };
-
-        const response = await fetch(API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            return res.json({ text });
         }
 
-        console.log("⚠️ Gemini failed. Using local AI. Error:", data);
+        // If a model worked, send it back!
+        if (aiResponseText) {
+            return res.json({ text: aiResponseText });
+        }
+
+        // If ALL models failed, gracefully use the Local AI
+        console.log("❌ All Gemini models failed. Triggering Local AI. Last Error:", lastError);
         return res.json({
             text: localLumina(userQuestion, matchedUniversities)
         });
@@ -174,7 +196,7 @@ Rules:
     } catch (err) {
         console.error("SERVER ERROR:", err);
         res.json({
-            text: "Lumina AI encountered a system issue. Please try again."
+            text: "Lumina AI encountered a critical system issue. Please try again."
         });
     }
 });
