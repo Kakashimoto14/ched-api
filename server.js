@@ -19,8 +19,24 @@ let databaseCache = [];
 const csvFilePath = path.join(__dirname, 'institutions.csv');
 
 fs.createReadStream(csvFilePath)
-.pipe(csv())
-.on('data', (data) => databaseCache.push(data))
+.pipe(csv({
+    separator: '\t' // IMPORTANT because your CSV is TAB separated
+}))
+.on('data', (data) => {
+
+    const cleaned = {
+        region: data["REGION"]?.trim(),
+        name: data["INSTITUTION NAME"]?.trim(),
+        type: data["INSTITUTION TYPE"]?.trim(),
+        province: data["PROVINCE"]?.trim(),
+        city: data["MUNICIPALITY/CITY"]?.trim(),
+        website: data["WEBSITE ADDRESS"]?.trim(),
+        contact: data["FAX/TELEPHONE NO."]?.trim()
+    };
+
+    databaseCache.push(cleaned);
+
+})
 .on('end', () => {
     console.log(`✅ Database loaded. ${databaseCache.length} universities found.`);
 })
@@ -40,10 +56,11 @@ function searchUniversities(query, db){
     const results = db.filter(u => {
 
         return (
-            u.NAME?.toLowerCase().includes(q) ||
-            u.CITY?.toLowerCase().includes(q) ||
-            u.REGION?.toLowerCase().includes(q) ||
-            u.TYPE?.toLowerCase().includes(q)
+            u.name?.toLowerCase().includes(q) ||
+            u.city?.toLowerCase().includes(q) ||
+            u.province?.toLowerCase().includes(q) ||
+            u.region?.toLowerCase().includes(q) ||
+            u.type?.toLowerCase().includes(q)
         )
 
     })
@@ -63,10 +80,10 @@ function localLumina(question, matches){
     }
 
     const list = matches.map(u =>
-        `• ${u.NAME} (${u.CITY}, ${u.REGION}) - ${u.TYPE}`
+        `• ${u.name} (${u.city}, ${u.province}) - ${u.type}`
     ).join("\n")
 
-    return `Here are universities related to your search:\n\n${list}`
+    return `Here are universities related to your search:\n\n${list}`;
 }
 
 
@@ -81,7 +98,7 @@ try{
 const { chatHistory } = req.body;
 
 const userQuestion =
-chatHistory[chatHistory.length - 1]?.parts?.[0]?.text || "";
+chatHistory?.[chatHistory.length - 1]?.parts?.[0]?.text || "";
 
 
 /* =========================================
@@ -102,7 +119,7 @@ if(matchedUniversities.length > 0){
 
 universityContext =
 matchedUniversities.map(u =>
-`${u.NAME} | ${u.CITY} | ${u.REGION} | ${u.TYPE}`
+`${u.name} | ${u.city} | ${u.province} | ${u.region} | ${u.type}`
 ).join("\n")
 
 }
