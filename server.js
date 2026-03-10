@@ -6,54 +6,51 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
-
-// REQUIRED for receiving JSON data (like chat history) from the frontend
 app.use(express.json()); 
 
-const PORT = process.env.PORT || 3000;
 let databaseCache = [];
 
-// 1. WARM UP CACHE: Read the CSV into memory ONCE when the server boots
-const csvFilePath = path.join(__dirname, 'institutions.csv');
+// VERCEL FIX: Use process.cwd() for serverless environments to accurately find files
+const csvFilePath = path.join(process.cwd(), 'institutions.csv');
 
-fs.createReadStream(csvFilePath)
-  .pipe(csv())
-  .on('data', (data) => databaseCache.push(data))
-  .on('end', () => {
-    console.log(`✅ Database loaded successfully. Found ${databaseCache.length} records.`);
-  })
-  .on('error', (err) => {
-    console.error('❌ Critical Error reading CSV file. Check if institutions.csv exists!', err);
-  });
+// WARM UP CACHE
+const loadDatabase = () => {
+  if (databaseCache.length > 0) return; // Skip if already loaded in this function instance
+  
+  if (fs.existsSync(csvFilePath)) {
+    fs.createReadStream(csvFilePath)
+      .pipe(csv())
+      .on('data', (data) => databaseCache.push(data))
+      .on('end', () => console.log(`✅ DB loaded: ${databaseCache.length} records.`))
+      .on('error', (err) => console.error('❌ CSV Error!', err));
+  } else {
+    console.error(`❌ CSV not found at: ${csvFilePath}`);
+  }
+};
 
-// --- NEW SECURE AI ROUTE ---
+// Trigger load immediately
+loadDatabase();
+
 app.post('/api/chat', async (req, res) => {
   try {
     const { chatHistory, systemContext } = req.body;
-    
-    // Grabs the key securely from Render's Environment Variables
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      console.error("No API key found in backend environment variables.");
+      console.error("No API key found.");
       return res.status(500).json({ error: "Server missing API key." });
     }
 
     const GEMINI_MODEL = "gemini-2.5-flash";
-
     const API_URL = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
     const payload = {
       contents: [
-        {
-          role: "user",
-          parts: [{ text: systemContext }]
-        },
+        { role: "user", parts: [{ text: systemContext }] },
         ...chatHistory
       ]
     };
 
-    // Make the secure fetch to Google from the backend
     const response = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -63,13 +60,11 @@ app.post('/api/chat', async (req, res) => {
     const data = await response.json();
     
     if (!response.ok) {
-      console.error("Gemini API Error Response:", data);
+      console.error("Gemini API Error:", data);
       return res.status(response.status).json(data);
     }
 
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Anomaly detected in neural link.";
-    
-    // Send the safe response text back to the frontend
     res.json({ text });
 
   } catch (error) {
@@ -78,23 +73,25 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// 2. THE DATA ENDPOINT: Sends your CSV data
 app.get('/api/institutions', (req, res) => {
   if (databaseCache.length === 0) {
-    return res.status(503).json({ error: "Database is warming up, please try again in a few seconds." });
+    loadDatabase(); // Try loading again if it was a cold start
+    return res.status(503).json({ error: "Database warming up, try again in 2 seconds." });
   }
-  res.json(databaseCache); // Instantly serve from RAM
+  res.json(databaseCache);
 });
 
-// 3. HEALTH CHECK
 app.get('/', (req, res) => {
-  res.send("🚀 CHED API is Live! Access data at /api/institutions or chat at /api/chat");
+  res.send("🚀 CHED API is Live on Vercel!");
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+// VERCEL FIX: Do not run app.listen() in Vercel production
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running locally on port ${PORT}`);
+  });
+}
 
-
-
-
+// VERCEL CRITICAL FIX: Export the app
+module.exports = app;
